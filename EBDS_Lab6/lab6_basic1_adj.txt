@@ -1,0 +1,87 @@
+/*
+ * key testing utility 
+ */
+#include <stdint.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <getopt.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <linux/types.h>
+#include <linux/spi/spidev.h>
+
+int fd;
+int ret = 0;
+int read_pin[8]={-1,-1,-1,-1,-1,-1,-1,-1};
+
+int write_ret;
+int write_on = 7;
+int write_off = 15;
+int write_all = 16;
+
+int main(int argc, char *argv[])
+{
+	unsigned int i;
+
+	fd = open("/dev/io_control",O_RDWR);
+	if(fd < 0)
+	{
+		perror("error to open /dev/io_control_dev");
+		exit(1);
+	}
+	
+	while(1)
+	{
+		ret = read(fd,read_pin,4*8);
+        if(ret < 0)
+        {
+			perror("error to read\n");
+            exit(1);
+        } 
+		
+		for(i=4;i<10;i++)
+  		{
+  			if(read_pin[i-7]==i && (i>6)) {//0 1 2
+				printf("read the PIN: PI%d-(key%d)\n",i,i-7);
+				write_on = i;
+				write_ret = write(fd, &write_on, 4);
+			}
+			else {
+				write_on = i+17;
+				write_ret = write(fd, &write_on, 4);
+			}
+			if(read_pin[i+1]==i && (i<=6)) {//5 6 7 
+				write_on = i+8;
+				write_ret = write(fd, &write_on, 4);
+				printf("read the PIN: PI%d-(key%d)\n",i,i+1);
+			}
+			else {
+				write_on = i+25;
+				write_ret = write(fd, &write_on, 4);
+			}
+		}
+		if(read_pin[3]==10) {//3
+			write_on = 10;
+			write_ret = write(fd, &write_on, 4);
+			printf("read the PIN: PG9-(key3)\n");
+		}
+		else{
+			write_on = 27;
+			write_ret = write(fd, &write_on, 4);
+		}
+		if(read_pin[4]==11) {//4
+			write_on = 11;
+			write_ret = write(fd, &write_on, 4);
+			printf("read the PIN: PG11-(key4)\n");
+		}
+		else{
+			write_on = 28;
+			write_ret = write(fd, &write_on, 4);
+		}
+	}
+	
+	close(fd);
+	return 0;
+}
+

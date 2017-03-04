@@ -1,0 +1,80 @@
+/*
+ * key testing utility 
+ */
+#include <stdint.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <getopt.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <linux/types.h>
+#include <linux/spi/spidev.h>
+
+#define ON 1
+#define OFF 0
+
+int fd;
+int ret = 0;
+int read_pin[8]={0,0,0,0,0,0,0,0};
+
+int write_ret;
+int write_on = 7;
+int write_off = 15;
+int write_all = 16;
+
+int main(int argc, char *argv[])
+{
+	unsigned int i;
+	unsigned int counter = 0;
+	unsigned int counter_prev = 0;
+	unsigned int state = OFF;
+
+	fd = open("/dev/io_control",O_RDWR);
+	if(fd < 0)
+	{
+		perror("error to open /dev/io_control_dev");
+		exit(1);
+	}
+	
+	while(1)
+	{
+		counter = 0;
+		
+		ret = read(fd,read_pin,4*8);
+        if(ret < 0)
+        {
+			perror("error to read\n");
+            exit(1);
+        }
+		
+		for (i=4;i<=11;i++){
+			if (i>6 && i<10 && read_pin[i-7]==i)
+				counter++;
+			else if (i<7 && read_pin[i+1]==i)
+				counter++;
+			else if (i==10 && read_pin[3]==i)
+				counter++;
+			else if (i==11 && read_pin[4]==i)
+				counter++;
+		}
+		
+		if (counter==2 && counter_prev!=2) {
+			if (state==OFF){
+				write_ret = write(fd, &write_all, 4);
+				state = ON;
+			}
+			else if (state==ON) {
+				write_ret = write(fd, &write_off, 4);
+				state = OFF;
+			}
+		}
+		
+		counter_prev = counter;
+		
+	}
+	
+	close(fd);
+	return 0;
+}
+

@@ -1,0 +1,465 @@
+#include<linux/init.h>
+#include<linux/module.h>
+#include<linux/fs.h>
+#include<linux/slab.h>
+#include<linux/device.h>
+#include <linux/cdev.h>
+#include <linux/io.h>
+#include <asm/uaccess.h>
+ 
+static volatile unsigned long *picfg0 = NULL;
+static volatile unsigned long *picfg1 = NULL;
+static volatile unsigned long *pidat0 = NULL;
+static volatile unsigned long *pipul0 = NULL;
+
+static volatile unsigned long *pgcfg1 = NULL;
+static volatile unsigned long *pgdat0 = NULL;
+static volatile unsigned long *pgpul0 = NULL;
+
+static volatile unsigned long *phcfg0 = NULL;
+static volatile unsigned long *phdat0 = NULL;
+
+static volatile unsigned long *pecfg0 = NULL;
+static volatile unsigned long *pecfg1 = NULL;
+static volatile unsigned long *pedat = NULL;
+
+#define vPI_CFG0 0x01C20920
+#define vPI_CFG1 0x01C20924
+#define vPI_PUL0 0x01C2093C
+#define vPI_DAT0 0x01c20930
+  
+#define vPG_CFG1 0x01C208DC
+#define vPG_PUL0 0x01C208F4
+#define vPG_DAT0 0x01c208E8
+
+#define vPE_CFG0 0x01C20890
+#define vPE_CFG1 0x01C20894
+#define vPE_DAT  0x01c208A0
+
+#define vPH_CFG0 0x01C20900
+#define vPH_DAT0 0x01c2090c
+#define TOTAL_PIN 8
+
+struct io_control_driver
+{
+	unsigned int dev_major;
+	struct class *io_control_class;
+	struct device *io_control_device;
+	struct cdev *io_control_cdev;
+	dev_t  devno;
+	unsigned int rval;
+};
+
+static struct io_control_driver *a10_driver;
+
+static int io_control_open(struct inode *inode, struct file *file)
+{
+//	printk(KERN_INFO "io_control open ok\n");	
+
+	/*pin for key init*/
+    *picfg0 &= ~((0xf<<16)|(0xf<<20)|(0xf<<24)|(0xf<<28));	
+	*picfg0 |=  (0x1<<16)|(0x1<<20)|(0x1<<24)|(0x1<<28);	//SET PI4~ PI7 for OUTPUT
+		
+    *picfg1 &= ~((0xf<<0)|(0xf<<4)|(0xf<<8));	
+	*picfg1 |=  (0x1<<0)|(0x1<<4)|(0x1<<8) ;	//SET PI8~ PI10 for OUTPUT(PI10 for spi_cs)
+		
+    *pgcfg1 &= ~((0xf<<4)|(0xf<<12));	
+	*pgcfg1 |=  (0x1<<4)|(0x1<<12);		//SET PG9 and PG11 for OUTPUT
+
+	*pidat0 |=((0x1<<4)|(0x1<<5)|(0x1<<6)|(0x1<<7)|(0x1<<8)|(0x1<<9));/*int output High*/
+	*pgdat0 |=((0x1<<9)|(0x1<<11));
+
+	/*pin for led init*/
+	*pecfg0 &= ~((0xf<<16)|(0xf<<20)|(0xf<<24)|(0xf<<28));
+	*pecfg0 |=  (0x1<<16)|(0x1<<20)|(0x1<<24)|(0x1<<28);
+
+	*pecfg1 &= ~((0xf<<0)|(0xf<<4)|(0xf<<8)|(0xf<<12));
+	*pecfg1 |=  (0x1<<0)|(0x1<<4)|(0x1<<8)|(0x1<<12);
+
+	/*pin for buzzer init*/
+	*phcfg0 &= ~(0xf<<28);	
+	*phcfg0 |=  (0x1<<28) ;	// SET PH15 OUTPUT
+
+	*phdat0 |=((0x1<<15));
+		
+	return 0;
+}
+
+static ssize_t io_control_read(struct file * file, const char __user * buf, size_t size, loff_t * ppos)
+{
+//	printk(KERN_INFO "io_control read ok\n");
+
+	unsigned long readdat;
+	unsigned long readPin[TOTAL_PIN];
+	unsigned long i;
+	int buffer[TOTAL_PIN];
+	
+	/*pin for key init*/
+	*picfg0 &= ~((0xf<<16)|(0xf<<20)|(0xf<<24)|(0xf<<28));	//SET PI4~ PI7 for INPUT
+
+	*picfg1 &= ~((0xf<<0)|(0xf<<4));    	//SET PI8 and PI9 for INPUT
+
+	*pgcfg1 &= ~((0xf<<4)|(0xf<<12));    //SET PG9 and PI11 for INPUT
+	
+	/*SET PI4 PI5 PI6 PI7 PI8 PI9 PULL-UP*/
+	*pipul0 &= ~((0x3<<8)|(0x3<<10)|(0x3<<12)|(0x3<<14)|(0x3<<16)|(0x3<<18));	
+    *pipul0 |=  (0x1<<8)|(0x1<<10)|(0x1<<12)|(0x1<<14)|(0x1<<16)|(0x1<<18);
+	/*SET PG9 and PG10 PULL-UP*/
+	*pgpul0 &= ~((0x3<<18)|(0x3<<22));
+    *pgpul0 |= (0x1<<18)|(0x1<<22);  
+	
+
+/*===========================================*/
+	for (i=4; i<=11; i++) {
+		/* 0 1 2 */
+		if (i>=7 && i<=9) {
+			readPin[i-7] = *pidat0;
+			readPin[i-7] >>= i;
+			readPin[i-7] &= 0x1;
+			if (readPin[i-7]==0)
+				buffer[i-7] = i;
+			else if (readPin[i-7]!=0 && buffer[i-7]==i)
+				buffer[i-7] = 0;
+		}
+		/* 5 6 7 */
+		else if (i<=6) {
+			readPin[i+1] = *pidat0;
+			readPin[i+1] >>= i;
+			readPin[i+1] &= 0x1;
+			if (readPin[i+1]==0)
+				buffer[i+1] = i;
+			else if (readPin[i+1]!=0 && buffer[i+1]==i)
+				buffer[i+1] = 0;
+		}
+		/* 3 4 */
+		else if (i==10) {
+			readPin[3] = *pgdat0;
+			readPin[3] >>= 9;
+			readPin[3] &= 0x1;
+			if (readPin[3]==0)
+				buffer[3] = i;
+			else if (readPin[3]!=0 && buffer[3]==i)
+				buffer[3] = 0;
+		}
+		else if (i==11) {
+			readPin[4] = *pgdat0;
+			readPin[4] >>= 11;
+			readPin[4] &= 0x1;
+			if (readPin[4]==0)
+				buffer[4] = i;
+			else if (readPin[4]!=0 && buffer[4]==i)
+				buffer[4] = 0;
+		}
+	}
+		
+	if(copy_to_user(buf, buffer, size))
+	{
+		printk(KERN_ERR "fail  copy_to_user!\n");
+		return -EINVAL;
+	}
+	
+/*===========================================*/
+
+
+
+
+	/*read PI4-9
+	for(i=4;i<10;i++)
+	{
+		readdat= *pidat0;
+	    readdat >>= i; 
+	    readdat &= 0x1;
+	    if(readdat==0)
+	    	a10_driver->rval= i;
+	    if((readdat!=0) && (a10_driver->rval==i))
+			a10_driver->rval= 0;
+	}*/
+	
+	/*read PG9
+	readdat= *pgdat0;
+	readdat >>= 9; 
+	readdat &= 0x1;
+	if(readdat==0)
+		  a10_driver->rval= 10;
+	if((readdat!=0) && (a10_driver->rval==10))
+		a10_driver->rval= 0;*/
+	
+	/*read PG11
+	readdat= *pgdat0;
+	readdat >>= 11; 
+	readdat &= 0x1;
+	if(readdat==0)
+		  a10_driver->rval= 11;
+	if((readdat!=0) && (a10_driver->rval==11))
+		a10_driver->rval= 0;*/
+	
+/*
+	if(copy_to_user(buf, &a10_driver->rval, size))
+	{
+		printk(KERN_ERR "fail  copy_to_user!\n");
+		return -EINVAL;
+	}
+*/	
+	
+	return size;
+}
+
+static ssize_t io_control_write(struct file * file, const char __user * buf, size_t size, loff_t * ppos)
+{
+//	printk(KERN_INFO "io_control write ok\n");
+
+    if(copy_from_user(&a10_driver->rval, buf, size))
+    {
+		printk(KERN_ERR "failed to copy_from_user!\n");
+		return -EINVAL;
+    }
+
+    switch(a10_driver->rval)
+    {
+        case 0:
+        {				
+			*pidat0 &= ~((0x1<<4)|(0x1<<5)|(0x1<<6)|(0x1<<7)|(0x1<<8)|(0x1<<9));			
+			*pgdat0 &= ~((0x1<<9)|(0x1<<11)); 
+			break;
+        }
+        case 1:
+		{
+			*pidat0 |= ((0x1<<4)|(0x1<<5)|(0x1<<6)|(0x1<<7)|(0x1<<8)|(0x1<<9));
+			*pgdat0 |= ((0x1<<9)|(0x1<<11));
+			break;
+		}
+		/*control buzzer*/         
+		case 3:   
+		{
+			*phdat0 &= ~((0x1<<15));
+			break;
+		}   
+		case 4:   
+		{
+			*phdat0 |= ((0x1<<15));
+			break;
+		}   
+		/*control spi cs*/       
+		case 5:   
+		{
+			*pidat0 &= ~((0x1<<10));   
+			break;
+		}   
+		case 6:   
+		{
+			*pidat0 |= ((0x1<<10));
+			break;
+		}    
+		/*control 8LEDs blink*/       
+		case 7:
+		{
+	         *pedat |= (0x1<<4);
+	          break;
+		}
+		case 8:
+		{
+			*pedat |= (0x1<<5);
+			break;
+		}
+		case 9:
+		{
+			*pedat |= (0x1<<6);
+			break;
+		}
+		case 10:
+		{
+			*pedat |= (0x1<<7);
+			break;
+		}
+		case 11:
+		{
+			*pedat |= (0x1<<8);
+			break;
+		}
+		case 12:
+		{
+			*pedat |= (0x1<<9);
+			break;
+		}
+		case 13:
+		{
+			*pedat |= (0x1<<10);
+			break;
+		}
+		case 14:
+		{
+			*pedat |= (0x1<<11);
+			break;
+		}
+		/*turn off the leds*/
+		case 15:
+		{
+			*pedat &= ~((0x1<<4)|(0x1<<5)|(0x1<<6)|(0x1<<7)|(0x1<<8)|(0x1<<9)|(0x1<<10)|(0x1<<11));	
+			break;
+		}
+		/*turn on all leds*/
+		case 16:
+		{
+			*pedat |= ((0x1<<4)|(0x1<<5)|(0x1<<6)|(0x1<<7)|(0x1<<8)|(0x1<<9)|(0x1<<10)|(0x1<<11));	
+			break;
+		}
+		case 24:
+		{
+			*pedat &= (0x1<<4);
+			break;
+		}
+		case 25:
+		{
+			*pedat &= (0x1<<5);
+			break;
+		}
+		case 26:
+		{
+			*pedat &= (0x1<<6);
+			break;
+		}
+		case 27:
+		{
+			*pedat &= (0x1<<7);
+			break;
+		}
+		case 28:
+		{
+			*pedat &= (0x1<<8);
+			break;
+		}
+		case 29:
+		{
+			*pedat &= (0x1<<9);
+			break;
+		}
+		case 30:
+		{
+			*pedat &= (0x1<<10);
+			break;
+		}
+		case 31:
+		{
+			*pedat &= (0x1<<11);
+			break;
+		}
+    }
+    return size;
+}
+
+struct file_operations open_file = {
+	.owner = THIS_MODULE,
+	.open  = io_control_open,
+	.read = io_control_read,
+	.write= io_control_write,
+};
+
+/*int cdev struct*/
+static void setup_cdev_init(void)
+{
+	a10_driver->io_control_cdev = cdev_alloc();
+	cdev_init(a10_driver->io_control_cdev, &open_file);
+	cdev_add(a10_driver->io_control_cdev, a10_driver->devno, 1);	
+}
+
+static int __init io_control_test_init(void)
+{
+	int ret;
+	printk(KERN_INFO "io_control_init ok!\n");
+	
+	a10_driver = kmalloc(sizeof(struct io_control_driver), GFP_KERNEL);
+	if(NULL == a10_driver)
+	{
+		printk(KERN_ERR "faild to malloc memory\n");
+		return -ENOMEM;
+	}
+
+	a10_driver->dev_major = 0;	
+	if(a10_driver->dev_major)
+	{
+		a10_driver->devno = MKDEV(100,0);
+		ret = register_chrdev_region(a10_driver->devno, 1, "io_control_module");
+		if(ret < 0)
+		{
+			printk(KERN_INFO "failed to register_chrdev_region\n");
+			goto register_err;
+		}
+	}
+	else
+	{
+		a10_driver->devno = MKDEV(a10_driver->dev_major,0);
+		ret = alloc_chrdev_region(&a10_driver->devno, 0,1, "open_module");
+		if(ret < 0)
+		{
+			printk(KERN_INFO "failed to register_chrdev_region\n");
+			goto register_err;
+		}
+	}
+	
+	setup_cdev_init();
+	
+	a10_driver->io_control_class = class_create(THIS_MODULE, "io_control_class");
+	if (IS_ERR(a10_driver->io_control_class))
+	{
+		ret = PTR_ERR(a10_driver->io_control_class);
+		goto class_err;
+	}
+	
+	a10_driver->io_control_device = device_create(a10_driver->io_control_class, NULL, a10_driver->devno, NULL, "io_control");
+	if (IS_ERR(a10_driver->io_control_device))
+	{
+		ret = PTR_ERR(a10_driver->io_control_device);
+		goto device_err;
+	}
+
+	/*map the addr*/
+	picfg0 = ioremap(vPI_CFG0, 0x10);
+	picfg1 = ioremap(vPI_CFG1, 0x10);
+	pidat0 = ioremap(vPI_DAT0, 0x10);
+	pipul0 = ioremap(vPI_PUL0, 0X10);
+	pgcfg1 = ioremap(vPG_CFG1, 0x10);
+	pgdat0 = ioremap(vPG_DAT0, 0x10);
+	pgpul0 = ioremap(vPG_PUL0, 0X10);
+	pecfg0 = ioremap(vPE_CFG0, 0x10);
+	pecfg1 = ioremap(vPE_CFG1, 0x10);
+	pedat =  ioremap(vPE_DAT,  0x10);
+	phcfg0 = ioremap(vPH_CFG0, 0x10);
+	phdat0 = ioremap(vPH_DAT0, 0x10);
+
+	return 0;
+	
+device_err:
+	class_destroy(a10_driver->io_control_class);
+class_err:
+	unregister_chrdev_region(a10_driver->devno, 1);
+	cdev_del(a10_driver->io_control_cdev);	
+register_err:
+	kfree(a10_driver);
+	return ret;	
+}
+
+static void __exit io_control_test_exit(void)
+{
+	printk(KERN_INFO "io_control_exit ok!\n");
+	
+	unregister_chrdev_region(a10_driver->devno, 1);
+	cdev_del(a10_driver->io_control_cdev);
+	device_destroy(a10_driver->io_control_class, a10_driver->devno);
+	class_destroy(a10_driver->io_control_class);
+	iounmap(picfg0);
+	iounmap(picfg1);
+	iounmap(pidat0);
+	iounmap(pipul0);
+	iounmap(pecfg0);
+	iounmap(pecfg1);
+	iounmap(pedat);
+	iounmap(phcfg0);
+	iounmap(phdat0);
+	kfree(a10_driver);
+}
+
+module_init(io_control_test_init);
+module_exit(io_control_test_exit);
+
+MODULE_LICENSE("GPL");
+

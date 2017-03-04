@@ -1,0 +1,59 @@
+/*
+ * key testing utility 
+ */
+#include <stdint.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <getopt.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <linux/types.h>
+#include <linux/spi/spidev.h>
+
+#define ON 1
+#define OFF 0
+
+int fd;
+int ret = 0;
+int read_pin;
+
+int write_ret;
+int write_on = 7;
+int write_off = 15;
+int write_all = 16;
+
+int main(int argc, char *argv[])
+{
+	unsigned int i;
+	char read_pin_buf;
+	char *data;
+	char *str;
+	int input;
+
+	fd = open("/dev/io_control",O_RDWR);
+	if(fd < 0)
+	{
+		perror("error to open /dev/io_control_dev");
+		exit(1);
+	}
+	
+	while(1)
+	{
+		ret = read(fd, &read_pin,4);
+		if(ret < 0)
+		{
+			perror("error to read\n");
+			exit(1);
+		}
+		read_pin_buf = read_pin;
+
+		if((read_pin_buf & (0x1<<i)) != 0)
+		{
+			char* sl_arg[]={"./v4l2grab","-o","image.jpg",0}
+			execvp(sl_arg[0],sl_arg);
+		}
+	}
+	close(fd);
+	return 0;
+}

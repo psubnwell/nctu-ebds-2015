@@ -1,0 +1,75 @@
+#include<stdio.h>
+#include<stdlib.h>
+#include<unistd.h>
+#include<sys/stat.h>
+#include<fcntl.h>
+
+int write_ret;
+int write_on = 7;
+int write_off = 15;
+int fd;
+int i;
+char *data;
+
+int main (){
+	printf("ContentType:text/html;\n\n");
+	printf("<html><body>");
+	printf("<form action=\"\" method=\"get\">");
+	printf("<input type=\"text\" name=\"id\"/>");
+	printf("<input type=\"submit\"/>");
+	printf("</form>");
+	
+	data = getenv("QUERY_STRING");
+	fd = open("/dev/io_control",O_RDWR);
+	if(fd < 0)
+	{
+		printf("error to open /dev/io_control\n");
+	}
+	
+	switch (data[3]) {
+		case '1': {
+			write_on =1 + 6 ;
+			break;
+		}
+		case '2': {
+			write_on =2 + 6 ;
+			break;
+		}
+		case '3': {
+			write_on =3 + 6 ;
+			break;
+		}
+		case '4': {
+			write_on =4 + 6 ;
+			break;
+		}
+		case '5': {
+			write_on =5 + 6 ;
+			break;
+		}
+		case '6': {
+			write_on =6 + 6 ;
+			break;
+		}
+		case '7': {
+			write_on =7 + 6 ;
+			break;
+		}
+		case '8': {
+			write_on =8 + 6 ;
+			break;
+		}
+		
+	}
+	
+	write_ret = write(fd, &write_on, 4);
+	if(write_ret < 0){
+		printf("error to write\n");
+	}
+	sleep(1);
+	write_ret = write(fd, &write_off, 4);
+	
+	printf("</body></html>");
+	close(fd);
+	return 0;
+}
